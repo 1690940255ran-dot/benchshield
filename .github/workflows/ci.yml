@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run test suite
+        run: python -m unittest discover -s tests -t . -v
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Demo (vulnerable vs secure)
+        run: python -m benchshield demo --n 20
+      - name: Scan demo bench (expect exit 1 = critical findings found)
+        run: |
+          set +e
+          python -m benchshield scan examples/vulnerable_bench
+          code=$?
+          if [ "$code" -ne 1 ]; then
+            echo "scan exited $code, expected 1 (critical findings)"; exit 1
+          fi
+      - name: Scan clean fixture (expect exit 0)
+        run: python -m benchshield scan tests/fixtures/clean_bench
+      - name: Install package and run from another directory
+        run: |
+          pip install .
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          python -m benchshield demo --n 5 --report report.md
+          test -f report.md

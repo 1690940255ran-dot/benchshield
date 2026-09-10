@@ -1,0 +1,7 @@
+{
+  "agent_dir": "agent",
+  "eval_dir": "eval_dir",
+  "allow_network": false,
+  "fresh_snapshot": true,
+  "log_segregation": true
+}

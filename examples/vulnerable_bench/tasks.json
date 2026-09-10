@@ -1,0 +1,223 @@
+[
+ {
+  "id": "task-001",
+  "category": "math_add",
+  "params": {
+   "a": 333,
+   "b": 972
+  },
+  "prompt": "What is 333 + 972? Reply with the number only.",
+  "gold": "1305"
+ },
+ {
+  "id": "task-002",
+  "category": "math_mul",
+  "params": {
+   "a": 21,
+   "b": 52
+  },
+  "prompt": "What is 21 x 52? Reply with the number only.",
+  "gold": "1092"
+ },
+ {
+  "id": "task-003",
+  "category": "str_reverse",
+  "params": {
+   "s": "bibfj"
+  },
+  "prompt": "Reverse the string 'bibfj'. Reply with the reversed string only.",
+  "gold": "jfbib"
+ },
+ {
+  "id": "task-004",
+  "category": "count_vowels",
+  "params": {
+   "s": "idabggbd"
+  },
+  "prompt": "How many vowels are in 'idabggbd'? Reply with the number only.",
+  "gold": "2"
+ },
+ {
+  "id": "task-005",
+  "category": "max_list",
+  "params": {
+   "items": [
+    283,
+    218,
+    31,
+    424,
+    290
+   ]
+  },
+  "prompt": "What is the maximum of [283, 218, 31, 424, 290]? Reply with the number only.",
+  "gold": "424"
+ },
+ {
+  "id": "task-006",
+  "category": "math_add",
+  "params": {
+   "a": 128,
+   "b": 972
+  },
+  "prompt": "What is 128 + 972? Reply with the number only.",
+  "gold": "1100"
+ },
+ {
+  "id": "task-007",
+  "category": "math_mul",
+  "params": {
+   "a": 30,
+   "b": 82
+  },
+  "prompt": "What is 30 x 82? Reply with the number only.",
+  "gold": "2460"
+ },
+ {
+  "id": "task-008",
+  "category": "str_reverse",
+  "params": {
+   "s": "jjgad"
+  },
+  "prompt": "Reverse the string 'jjgad'. Reply with the reversed string only.",
+  "gold": "dagjj"
+ },
+ {
+  "id": "task-009",
+  "category": "count_vowels",
+  "params": {
+   "s": "icegcibj"
+  },
+  "prompt": "How many vowels are in 'icegcibj'? Reply with the number only.",
+  "gold": "3"
+ },
+ {
+  "id": "task-010",
+  "category": "max_list",
+  "params": {
+   "items": [
+    287,
+    418,
+    350,
+    93,
+    53,
+    298,
+    293
+   ]
+  },
+  "prompt": "What is the maximum of [287, 418, 350, 93, 53, 298, 293]? Reply with the number only.",
+  "gold": "418"
+ },
+ {
+  "id": "task-011",
+  "category": "math_add",
+  "params": {
+   "a": 656,
+   "b": 194
+  },
+  "prompt": "What is 656 + 194? Reply with the number only.",
+  "gold": "850"
+ },
+ {
+  "id": "task-012",
+  "category": "math_mul",
+  "params": {
+   "a": 49,
+   "b": 14
+  },
+  "prompt": "What is 49 x 14? Reply with the number only.",
+  "gold": "686"
+ },
+ {
+  "id": "task-013",
+  "category": "str_reverse",
+  "params": {
+   "s": "jajdhi"
+  },
+  "prompt": "Reverse the string 'jajdhi'. Reply with the reversed string only.",
+  "gold": "ihdjaj"
+ },
+ {
+  "id": "task-014",
+  "category": "count_vowels",
+  "params": {
+   "s": "fhjhfedcdbjeih"
+  },
+  "prompt": "How many vowels are in 'fhjhfedcdbjeih'? Reply with the number only.",
+  "gold": "3"
+ },
+ {
+  "id": "task-015",
+  "category": "max_list",
+  "params": {
+   "items": [
+    374,
+    230,
+    148,
+    312,
+    38,
+    61,
+    263
+   ]
+  },
+  "prompt": "What is the maximum of [374, 230, 148, 312, 38, 61, 263]? Reply with the number only.",
+  "gold": "374"
+ },
+ {
+  "id": "task-016",
+  "category": "math_add",
+  "params": {
+   "a": 430,
+   "b": 170
+  },
+  "prompt": "What is 430 + 170? Reply with the number only.",
+  "gold": "600"
+ },
+ {
+  "id": "task-017",
+  "category": "math_mul",
+  "params": {
+   "a": 98,
+   "b": 45
+  },
+  "prompt": "What is 98 x 45? Reply with the number only.",
+  "gold": "4410"
+ },
+ {
+  "id": "task-018",
+  "category": "str_reverse",
+  "params": {
+   "s": "hgabijf"
+  },
+  "prompt": "Reverse the string 'hgabijf'. Reply with the reversed string only.",
+  "gold": "fjibagh"
+ },
+ {
+  "id": "task-019",
+  "category": "count_vowels",
+  "params": {
+   "s": "fjhjhbbehbaej"
+  },
+  "prompt": "How many vowels are in 'fjhjhbbehbaej'? Reply with the number only.",
+  "gold": "3"
+ },
+ {
+  "id": "task-020",
+  "category": "max_list",
+  "params": {
+   "items": [
+    421,
+    229,
+    146,
+    367,
+    198,
+    455,
+    343,
+    178,
+    12,
+    482
+   ]
+  },
+  "prompt": "What is the maximum of [421, 229, 146, 367, 198, 455, 343, 178, 12, 482]? Reply with the number only.",
+  "gold": "482"
+ }
+]
