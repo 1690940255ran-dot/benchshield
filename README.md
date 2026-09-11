@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#design-notes)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-52%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen.svg)](tests/)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -124,10 +124,10 @@ no false negatives on the seven patterns; findings still deserve human review.
 | # | Requirement | Enforced by |
 |---|---|---|
 | C1 | Agent and evaluator environments isolated | `SecureRunner`: evaluator = separate process |
-| C2 | Network egress disabled for the agent | config flag (see limitations) |
+| C2 | Network egress disabled for the agent | `netguard`: runtime-enforced socket/DNS block while the agent acts |
 | C3 | Reference answers never agent-accessible | `SecureRunner`: gold never written to the workspace |
 | C4 | No `eval()`/`exec()` on agent strings | scanner + runtime (response parsed as text) |
-| C5 | Judge prompts sanitize agent input | scanner |
+| C5 | Judge prompts sanitize agent input | `judgeguard`: sanitizer library + random-fence prompt builder |
 | C6 | Robust answer comparison | `exact_match` checker |
 | C7 | Validation actually verifies correctness | scanner |
 | C8 | No code loaded from agent-writable paths | checker ships with the evaluator |
@@ -143,15 +143,57 @@ benchshield/
 │   ├── checklist.py     # Agent-Eval Checklist (C1-C10) scoring
 │   ├── sandbox.py       # VulnerableRunner / SecureRunner
 │   ├── redteam.py       # zero-capability attack payloads + honest baseline agent
+│   ├── netguard.py      # C2 defense: runtime-enforced network block (socket/DNS patch)
+│   ├── judgeguard.py    # V4 defense: judge-prompt sanitizer + injection detector
+│   ├── yamlmini.py      # zero-dependency YAML subset parser (configs / compose files)
 │   ├── benchdata.py     # deterministic 5-category mini benchmark
 │   ├── example_bench.py # self-contained vulnerable-bench generator (demo target)
 │   ├── eval_worker.py   # evaluator entry point (separate process)
 │   ├── report.py        # markdown report rendering
 │   └── __main__.py      # CLI: scan / demo / export-bench
 ├── examples/vulnerable_bench/   # demo benchmark containing all 7 patterns
-├── tests/                       # 52 unit tests, stdlib unittest
+├── tests/                       # 85 unit tests, stdlib unittest
 └── pyproject.toml
 ```
+
+## Defenses, not just detection
+
+Three of the checklist items ship with working defenses, not only detection:
+
+**`netguard` — runtime network isolation (C2).** While the agent acts, every
+Python-level network API (`socket`, DNS resolution, `urllib`) raises
+`NetworkBlockedError`. Attempts are logged as tamper events. On by default in
+`SecureRunner`; opt out with `block_network=False`.
+
+```python
+from benchshield.netguard import network_blocked, NetworkBlockedError
+
+with network_blocked():
+    ...  # agent code runs here; any socket call raises
+```
+
+**`judgeguard` — judge-prompt hardening (V4).** `sanitize()` strips control
+characters and forged fence markers and caps length; `detect_injection()`
+flags common prompt-injection attempts (ignore-instructions, role hijack,
+output forcing, gold leaking, chat-template escape); `build_judge_prompt()`
+wraps the response in a **randomly generated fence** the agent cannot
+precompute, with an anti-injection preamble.
+
+```python
+from benchshield.judgeguard import build_judge_prompt
+
+prompt, report = build_judge_prompt(agent_response, gold)
+if report.suspicious:
+    ...  # log the injection attempt
+```
+
+**`yamlmini` — YAML subset parser.** Benchmark configs and docker-compose
+files scanned without PyYAML. The parser is deliberately conservative: it
+supports the config subset (block mappings, sequences, scalars) and **raises**
+on anything it cannot faithfully represent (anchors, flow collections, block
+literals) — a wrong parse of an isolation setting would be worse than none.
+Compose files get their own V1 rules: agent services with `network_mode: host`
+and agent/evaluator services sharing a volume are both flagged.
 
 ## Design notes
 
@@ -167,18 +209,22 @@ benchshield/
 
 ## Limitations
 
-- Scanner supports Python + JSON/JSONL benchmarks; YAML and docker-compose are on the roadmap.
-- Network isolation (C2) is enforced on Linux runners via namespaces in the roadmap; today it
-  is a config-declared property.
-- The mini benchmark is fully verifiable (exact match); LLM-judge sanitization (V4) can only
-  be flagged statically, not proven safe.
+- The `netguard` network block operates at the Python API level; a native
+  extension calling OS sockets directly would bypass it. For high-stakes
+  runs, layer container/namespace isolation on top (Linux `unshare -n`).
+- LLM-judge sanitization (`judgeguard`) reduces and detects injection, but
+  no text-level defense can be *proven* safe against every prompt attack.
+- The mini benchmark is fully verifiable (exact match); semantic-judge
+  integration is on the roadmap.
 
 ## Roadmap
 
-- [ ] Docker-based task sandboxes (fresh container snapshot per task, no network namespace)
-- [ ] YAML / docker-compose config scanning
+- [x] YAML / docker-compose config scanning (`yamlmini` + compose rules)
+- [x] Runtime-enforced network isolation (`netguard`, C2)
+- [x] Judge-prompt sanitizer library (`judgeguard`, V4)
+- [ ] Docker-based task sandboxes (fresh container snapshot per task)
 - [ ] SWE-bench / Terminal-Bench task-format adapters
-- [ ] Judge-prompt sanitizer library (defense, not just detection)
+- [ ] Semantic (LLM) judge integration using `judgeguard`
 
 ## Contributing
 

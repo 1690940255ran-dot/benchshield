@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![零依赖](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#设计说明)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-52%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen.svg)](tests/)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -116,10 +116,10 @@ Agent-Eval Checklist grade: F (failed: C1, C2, C3, C4, C5, C6, C7, C8)
 | # | 要求 | 由谁落实 |
 |---|---|---|
 | C1 | 智能体与评测器环境隔离 | `SecureRunner`：评测器跑在独立进程 |
-| C2 | 任务执行期间禁止智能体网络出口 | 配置声明（见限制） |
+| C2 | 任务执行期间禁止智能体网络出口 | `netguard`：智能体执行期间运行时强制阻断 socket/DNS |
 | C3 | 金标答案绝不可被智能体访问 | `SecureRunner`：金标从不写入工作区 |
 | C4 | 不对智能体字符串调用 `eval()`/`exec()` | 扫描器 + 运行时（响应按纯文本解析） |
-| C5 | 评判提示词对智能体输入做消毒 | 扫描器 |
+| C5 | 评判提示词对智能体输入做消毒 | `judgeguard`：消毒库 + 随机围栏提示词构建器 |
 | C6 | 稳健的答案比较 | `exact_match` 检查器 |
 | C7 | 验证逻辑真的在验证正确性 | 扫描器 |
 | C8 | 不从智能体可写路径加载代码 | 检查器随评测器一起分发 |
@@ -135,15 +135,37 @@ benchshield/
 │   ├── checklist.py     # Agent-Eval Checklist（C1-C10）评分
 │   ├── sandbox.py       # VulnerableRunner / SecureRunner
 │   ├── redteam.py       # 零能力攻击载荷 + 诚实基线智能体
+│   ├── netguard.py      # C2 防御：运行时强制网络阻断（socket/DNS 补丁）
+│   ├── judgeguard.py    # V4 防御：评判提示词消毒 + 注入检测
+│   ├── yamlmini.py      # 零依赖 YAML 子集解析器（配置 / compose 文件）
 │   ├── benchdata.py     # 确定性的 5 类 mini 基准
 │   ├── example_bench.py # 自包含的易攻破靶场生成器（demo 扫描目标）
 │   ├── eval_worker.py   # 评测器入口（独立进程）
 │   ├── report.py        # Markdown 报告渲染
 │   └── __main__.py      # CLI：scan / demo / export-bench
 ├── examples/vulnerable_bench/   # 包含全部七类漏洞的演示基准
-├── tests/                       # 52 项单元测试（标准库 unittest）
+├── tests/                       # 85 项单元测试（标准库 unittest）
 └── pyproject.toml
 ```
+
+## 防御，而不只是检测
+
+清单中有三项自带可用的防御实现：
+
+**`netguard` —— 运行时网络隔离（C2）。** 智能体执行期间，所有 Python 层网络 API
+（`socket`、DNS 解析、`urllib`）都会抛出 `NetworkBlockedError`，尝试本身会记为篡改
+事件。`SecureRunner` 默认开启，可用 `block_network=False` 显式关闭。
+
+**`judgeguard` —— 评判提示词加固（V4）。** `sanitize()` 去除控制字符和伪造围栏并
+限长；`detect_injection()` 标记常见提示词注入尝试（无视指令、角色劫持、强制输出、
+泄露金标、聊天模板逃逸）；`build_judge_prompt()` 用**随机生成的围栏**包裹智能体
+响应（无法预算），并附反注入前言。
+
+**`yamlmini` —— YAML 子集解析器。** 无需 PyYAML 即可扫描基准配置和
+docker-compose 文件。解析器刻意保守：支持配置常用子集（块映射、序列、标量），
+对无法忠实表示的语法（锚点、流式集合、块字面量）**直接抛错**——错误解析隔离
+配置比不解析更糟。compose 文件有专属 V1 规则：智能体服务用 `network_mode: host`、
+智能体与评测器服务共享卷，均会被标记。
 
 ## 设计说明
 
@@ -154,16 +176,18 @@ benchshield/
 
 ## 限制
 
-- 扫描器目前支持 Python + JSON/JSONL 基准；YAML 和 docker-compose 在规划中。
-- 网络隔离（C2）目前在 Linux 运行器上通过 namespace 强制，处于规划阶段；当前是配置声明属性。
-- mini 基准是完全可判分的（精确匹配）；LLM 评判器消毒（V4）只能静态标记，无法证明其安全。
+- `netguard` 的网络阻断工作在 Python API 层；直接调用系统 socket 的原生扩展可绕过。高风险场景请在其上叠加容器/namespace 隔离（Linux `unshare -n`）。
+- LLM 评判器消毒（`judgeguard`）能减少并检测注入，但任何文本层防御都无法被*证明*对所有提示词攻击安全。
+- mini 基准是完全可判分的（精确匹配）；语义（LLM）评判器集成在规划中。
 
 ## 路线图
 
-- [ ] 基于 Docker 的任务沙箱（每任务全新容器快照、无网络 namespace）
-- [ ] YAML / docker-compose 配置扫描
+- [x] YAML / docker-compose 配置扫描（`yamlmini` + compose 规则）
+- [x] 运行时强制网络隔离（`netguard`，C2）
+- [x] 评判提示词消毒库（`judgeguard`，V4）
+- [ ] 基于 Docker 的任务沙箱（每任务全新容器快照）
 - [ ] SWE-bench / Terminal-Bench 任务格式适配器
-- [ ] 评判提示词消毒库（防御，而不只是检测）
+- [ ] 基于 `judgeguard` 的语义（LLM）评判器集成
 
 ## 参与贡献
 

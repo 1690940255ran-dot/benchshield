@@ -14,6 +14,7 @@ SecureRunner implements the Agent-Eval Checklist isolation requirements:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -27,6 +28,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .benchdata import public_view
+from .netguard import NetworkBlockedError, network_blocked
+
+# contextlib.nullcontext exists on 3.7+; alias for readability.
+_nullcontext = contextlib.nullcontext
 
 DEFAULT_CHECKER_SRC = (
     "def check(response, gold):\n"
@@ -194,13 +199,16 @@ class SecureRunner:
 
     name = "secure"
 
-    def __init__(self, tasks, workspace_root) -> None:
+    def __init__(self, tasks, workspace_root, block_network: bool = True) -> None:
         self.tasks = list(tasks)
         self.root = Path(workspace_root)
         self.logs_dir = self.root / "logs"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.agent_log_path = self.logs_dir / "agent.log"
         self.eval_log_path = self.logs_dir / "eval.log"
+        # C2: network egress is enforced at runtime (not just declared in
+        # config) unless the operator explicitly opts out.
+        self.block_network = block_network
 
     def __enter__(self):
         return self
@@ -224,7 +232,21 @@ class SecureRunner:
                     task_file = task_ws / "task.txt"
                     task_file.write_text(task["prompt"], encoding="utf-8")
                     task_prompt_hash = hashlib.sha256(task["prompt"].encode("utf-8")).hexdigest()
-                    out = agent.act(public_view(task), task_ws)
+                    # C2: while the agent acts, network access is blocked at
+                    # the Python API level; violations are recorded as notes.
+                    net_notes = []
+                    act_ctx = network_blocked() if self.block_network else _nullcontext()
+                    try:
+                        with act_ctx:
+                            out = agent.act(public_view(task), task_ws)
+                    except NetworkBlockedError as exc:
+                        # The agent tried to reach the network; the attempt
+                        # itself is a tamper signal worth recording.
+                        out = ""
+                        net_notes.append(
+                            f"agent network attempt blocked (C2): {exc}")
+                    if net_notes:
+                        tamper_attempts += 1
                     (task_ws / "response.txt").write_text(str(out), encoding="utf-8")
                     expected = {"task.txt", "response.txt"}
                     extra_files = sorted(
@@ -262,7 +284,7 @@ class SecureRunner:
                         "gold": task["gold"],
                         "response_file": str(task_ws / "response.txt"),
                     }
-                    notes = []
+                    notes = list(net_notes)
                     try:
                         proc = subprocess.run(
                             [sys.executable, "-m", "benchshield.eval_worker", json.dumps(spec)],

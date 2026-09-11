@@ -108,6 +108,87 @@ class ScanResult:
         return sorted(self.findings, key=lambda f: -SEVERITY_RANK.get(f.severity, 0))
 
 
+COMPOSE_NAMES = {"docker-compose.yml", "docker-compose.yaml", "compose.yml",
+                 "compose.yaml", "docker-compose.override.yml"}
+COMPOSE_AGENT_RE = re.compile(r"agent|solver|subject|player|policy", re.I)
+COMPOSE_EVAL_RE = re.compile(r"eval|grader|checker|judge|scorer|verifier", re.I)
+
+
+def _config_finding(p, result, root, rule, vuln_class, title, severity, evidence, remediation):
+    result.findings.append(Finding(
+        rule, vuln_class, title, severity,
+        p.relative_to(root).as_posix(), 1, evidence, remediation))
+
+
+def _load_json_config(p, result, root, counted):
+    """Parse a JSON config file; returns dict or None (findings added on failure)."""
+    rel_p = p.relative_to(root).as_posix()
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # Auditing a half-loaded config is worse than no audit at
+        # all: it gives a false sense of safety. Surface the failure
+        # as a V0 finding so the operator knows isolation/policy
+        # could not be verified for this file.
+        result.files_scanned += 1
+        counted.add(str(p))
+        result.findings.append(Finding(
+            "CONFIG-PARSE", "V0",
+            f"config file could not be parsed: {exc}",
+            "info", rel_p, 0, "",
+            "Fix the JSON syntax/encoding so the config can be audited; "
+            "agent_dir / eval_dir / allow_network values for this file "
+            "are unknown and isolation cannot be verified."))
+        return None
+
+
+def _load_yaml_config(p, result, root, counted):
+    """Parse a YAML config file; returns dict or None (findings added on failure)."""
+    from .yamlmini import YamlMiniError, loads
+    rel_p = p.relative_to(root).as_posix()
+    try:
+        data = loads(p.read_text(encoding="utf-8"))
+    except YamlMiniError as exc:
+        result.files_scanned += 1
+        counted.add(str(p))
+        result.findings.append(Finding(
+            "CONFIG-PARSE", "V0",
+            f"YAML config could not be parsed: {exc}",
+            "info", rel_p, 0, "",
+            "Fix the YAML syntax so the config can be audited. BenchShield "
+            "supports the common config subset (block mappings, sequences, "
+            "scalars); anchors, flow collections and block literals are "
+            "rejected to avoid silently misreading isolation settings."))
+        return None
+    except (OSError, UnicodeDecodeError) as exc:
+        result.files_scanned += 1
+        counted.add(str(p))
+        result.findings.append(Finding(
+            "CONFIG-PARSE", "V0", f"config file could not be read: {exc}",
+            "info", rel_p, 0, "",
+            "Fix the encoding so the config can be audited."))
+        return None
+    return data
+
+
+def _check_config_shape(p, result, root, counted, data, kind="JSON"):
+    """Validate the parsed config is an object; returns True if usable."""
+    if isinstance(data, dict):
+        return True
+    result.files_scanned += 1
+    counted.add(str(p))
+    result.findings.append(Finding(
+        "CONFIG-NONDICT", "V1",
+        f"config file is not a {kind} object; isolation/policy "
+        "fields cannot be checked",
+        "high", p.relative_to(root).as_posix(), 1,
+        f"top-level {kind} type: {type(data).__name__}",
+        "Config files must be a mapping whose keys map to agent/evaluator "
+        "directory paths and policy flags. Any other top-level shape "
+        "silently disables isolation auditing."))
+    return False
+
+
 def scan_directory(root) -> ScanResult:
     """Scan a benchmark project directory for the seven vulnerability patterns."""
     root = Path(root)
@@ -120,52 +201,39 @@ def scan_directory(root) -> ScanResult:
         if p.is_file() and not (SKIP_DIRS & set(p.relative_to(root).parts))
     ]
 
-    # Pass 1: config files first (they tell us where the agent workspace is).
+    # Pass 1: config files first (they tell us where the agent workspace is),
+    # then docker-compose files (V1 isolation rules).
     counted = set()
     config = {}
     for p in files:
-        if p.suffix == ".json" and "config" in p.name.lower():
-            rel_p = p.relative_to(root).as_posix()
-            try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                # Auditing a half-loaded config is worse than no audit at
-                # all: it gives a false sense of safety. Surface the failure
-                # as a V0 finding so the operator knows isolation/policy
-                # could not be verified for this file.
-                result.files_scanned += 1
-                counted.add(str(p))
-                result.findings.append(Finding(
-                    "CONFIG-PARSE", "V0",
-                    f"config file could not be parsed: {exc}",
-                    "info", rel_p, 0, "",
-                    "Fix the JSON syntax/encoding so the config can be audited; "
-                    "agent_dir / eval_dir / allow_network values for this file "
-                    "are unknown and isolation cannot be verified."))
+        name_lower = p.name.lower()
+        if p.suffix == ".json" and "config" in name_lower:
+            data = _load_json_config(p, result, root, counted)
+            if data is None:
                 continue
-            if not isinstance(data, dict):
-                # A non-object config is structurally invalid for declaring
-                # paths or policy flags. Silent skip would make the scanner
-                # claim "no isolation problems" on a bench it never read.
-                result.files_scanned += 1
-                counted.add(str(p))
-                result.findings.append(Finding(
-                    "CONFIG-NONDICT", "V1",
-                    "config file is not a JSON object; isolation/policy "
-                    "fields cannot be checked",
-                    "high", rel_p, 1,
-                    f"top-level JSON type: {type(data).__name__}",
-                    "Config files must be a JSON object whose keys map to "
-                    "agent/evaluator directory paths and policy flags. A "
-                    "number / string / array silently disables isolation "
-                    "auditing."))
+            if not _check_config_shape(p, result, root, counted, data, "JSON"):
                 continue
             result.files_scanned += 1
             counted.add(str(p))
             _scan_config(p, data, result, root)
             config.update(data)
+        elif p.suffix in {".yaml", ".yml"} and "config" in name_lower:
+            data = _load_yaml_config(p, result, root, counted)
+            if data is None:
+                continue
+            if not _check_config_shape(p, result, root, counted, data, "YAML"):
+                continue
+            result.files_scanned += 1
+            counted.add(str(p))
+            _scan_config(p, data, result, root)
+            config.update(data)
+        elif name_lower in COMPOSE_NAMES:
+            result.files_scanned += 1
+            counted.add(str(p))
+            _scan_compose(p, result, root)
 
-    agent_dirs = [str(v) for k, v in config.items() if k in AGENT_DIR_KEYS]
+    agent_dirs = [str(v) for k, v in config.items()
+                  if k in AGENT_DIR_KEYS and isinstance(v, str)]
 
     # Pass 2: Python sources and task data files.
     for p in files:
@@ -177,7 +245,84 @@ def scan_directory(root) -> ScanResult:
         elif p.suffix in {".json", ".jsonl"}:
             result.files_scanned += 1
             _scan_data(p, result, root, agent_dirs)
+        elif p.suffix in {".yaml", ".yml"}:
+            result.files_scanned += 1
+            _scan_yaml_data(p, result, root, agent_dirs)
     return result
+
+
+# ---------------------------------------------------------------- compose rules
+
+def _volumes_of(service: dict) -> set:
+    """Named volumes and bind-mount sources referenced by a compose service."""
+    vols = set()
+    for entry in service.get("volumes", []) or []:
+        if not isinstance(entry, str):
+            continue
+        source = entry.split(":")[0].strip()
+        if source and source not in ("/", "."):
+            vols.add(source)
+    return vols
+
+
+def _scan_compose(path: Path, result: ScanResult, root: Path) -> None:
+    """V1 rules for docker-compose style benchmark setups.
+
+    A compose file is the isolation boundary of a container-based bench.
+    Two patterns make it porous:
+      * the agent service runs with host networking (full egress + can
+        reach the evaluator on localhost);
+      * the agent and evaluator services mount the SAME volume/bind path,
+        recreating the shared-workspace anti-pattern inside containers.
+    """
+    from .yamlmini import YamlMiniError, loads
+    rel = path.relative_to(root).as_posix()
+    try:
+        data = loads(path.read_text(encoding="utf-8"))
+    except YamlMiniError as exc:
+        result.findings.append(Finding(
+            "COMPOSE-PARSE", "V0", f"compose file could not be parsed: {exc}",
+            "info", rel, 0, "",
+            "Fix the YAML so the compose file can be audited; service "
+            "isolation for this file is unknown."))
+        return
+    services = data.get("services") if isinstance(data, dict) else None
+    if not isinstance(services, dict) or not services:
+        return
+
+    agent_services = {n: s for n, s in services.items()
+                      if isinstance(s, dict) and COMPOSE_AGENT_RE.search(n)
+                      and not COMPOSE_EVAL_RE.search(n)}
+    eval_services = {n: s for n, s in services.items()
+                     if isinstance(s, dict) and COMPOSE_EVAL_RE.search(n)}
+
+    # ENV-NET equivalent: agent container with host networking.
+    for name, svc in agent_services.items():
+        if svc.get("network_mode") == "host":
+            result.findings.append(Finding(
+                "COMPOSE-NET-HOST", "V1",
+                f"agent service '{name}' uses network_mode: host",
+                "high", rel, 1, f"services.{name}.network_mode: host",
+                "Give the agent service its own network and remove it from "
+                "the evaluator's network; never run the agent with host "
+                "networking during tasks."))
+
+    # ENV-SHARED equivalent: agent and evaluator share a volume/bind path.
+    for aname, asvc in agent_services.items():
+        avols = _volumes_of(asvc)
+        if not avols:
+            continue
+        for ename, esvc in eval_services.items():
+            shared = avols & _volumes_of(esvc)
+            if shared:
+                result.findings.append(Finding(
+                    "COMPOSE-SHARED-VOL", "V1",
+                    f"agent service '{aname}' and evaluator service "
+                    f"'{ename}' mount the same volume(s)",
+                    "high", rel, 1, f"shared: {sorted(shared)}",
+                    "The agent must not share any volume or bind path with "
+                    "the evaluator; move gold answers and checker code to "
+                    "evaluator-only volumes."))
 
 
 # ---------------------------------------------------------------- config rules
@@ -284,10 +429,10 @@ def _scan_data(path: Path, result: ScanResult, root: Path, agent_dirs: list) -> 
 
 
 def _flatten_records(node):
-    """Walk a JSON document and return every dict that looks like a task
-    record (i.e. sits inside a list anywhere in the tree).
+    """Walk a JSON/YAML document and return every dict that looks like a
+    task record (i.e. sits inside a list anywhere in the tree).
 
-    A task bundle is often shaped like ``{"metadata": ..., "tasks": [...]``}
+    A task bundle is often shaped like ``{"metadata": ..., "tasks": [...]}``
     or ``{"benchmark": {"items": [...]}}``. Walking only the top level would
     miss every nested list of records and produce a false negative on
     DATA-LEAK.
@@ -307,6 +452,36 @@ def _flatten_records(node):
                 if isinstance(v, (dict, list)):
                     stack.append(v)
     return found
+
+
+def _scan_yaml_data(path: Path, result: ScanResult, root: Path, agent_dirs: list) -> None:
+    """DATA-LEAK check for YAML task bundles (same logic as JSON data files)."""
+    from .yamlmini import YamlMiniError, loads
+    rel = path.relative_to(root).as_posix()
+    try:
+        data = loads(path.read_text(encoding="utf-8"))
+    except (YamlMiniError, OSError, UnicodeDecodeError):
+        return
+    if data is None:
+        return
+    records = _flatten_records(data)
+    dict_records = [r for r in records if isinstance(r, dict)]
+    has_gold = any(set(r) & GOLD_KEYS for r in dict_records)
+    if not has_gold:
+        return
+    has_prompt = any(set(r) & PROMPT_KEYS for r in dict_records)
+    in_agent_dir = any(_is_under(rel, d) for d in agent_dirs) if agent_dirs else False
+    if not (has_prompt or in_agent_dir):
+        return
+
+    n = sum(1 for r in dict_records if set(r) & GOLD_KEYS)
+    reason = ("gold answers shipped next to prompts" if has_prompt
+              else "gold-answer file stored inside the agent workspace")
+    gold_keys = sorted({k for r in dict_records for k in r if k in GOLD_KEYS})
+    result.findings.append(Finding(
+        "DATA-LEAK", "V2",
+        f"{n} record(s) with gold answers ({reason})",
+        "critical", rel, 1, f"gold keys: {gold_keys}", REMEDIATIONS["V2"]))
 
 
 # ---------------------------------------------------------------- python rules
