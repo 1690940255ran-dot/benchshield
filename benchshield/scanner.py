@@ -24,7 +24,7 @@ from pathlib import Path
 GOLD_KEYS = {"answer", "gold", "gold_answer", "expected", "expected_answer",
              "solution", "ground_truth", "label"}
 PROMPT_KEYS = {"prompt", "question", "task", "instruction", "description",
-               "problem", "query"}
+               "problem", "query", "problem_statement"}
 AGENT_DIR_KEYS = {"agent_dir", "agent_workspace", "workspace", "agent_root"}
 EVAL_DIR_KEYS = {"eval_dir", "test_dir", "tests_dir", "evaluator_dir", "eval_root"}
 
@@ -410,7 +410,19 @@ def _scan_data(path: Path, result: ScanResult, root: Path, agent_dirs: list) -> 
         return
 
     dict_records = [r for r in records if isinstance(r, dict)]
-    has_gold = any(set(r) & GOLD_KEYS for r in dict_records)
+    if not dict_records:
+        return
+
+    # SWE-bench data files carry gold patches under non-obvious field names
+    # (patch / test_patch); recognize the format signature so those count
+    # as V2 gold answers too.
+    from .adapters import SWEBENCH_GOLD_KEYS, looks_like_swebench
+    gold_keys_all = set(GOLD_KEYS)
+    is_swebench = looks_like_swebench(dict_records)
+    if is_swebench:
+        gold_keys_all |= SWEBENCH_GOLD_KEYS
+
+    has_gold = any(set(r) & gold_keys_all for r in dict_records)
     if not has_gold:
         return
     has_prompt = any(set(r) & PROMPT_KEYS for r in dict_records)
@@ -418,10 +430,12 @@ def _scan_data(path: Path, result: ScanResult, root: Path, agent_dirs: list) -> 
     if not (has_prompt or in_agent_dir):
         return
 
-    n = sum(1 for r in dict_records if set(r) & GOLD_KEYS)
+    n = sum(1 for r in dict_records if set(r) & gold_keys_all)
     reason = ("gold answers shipped next to prompts" if has_prompt
               else "gold-answer file stored inside the agent workspace")
-    gold_keys = sorted({k for r in dict_records for k in r if k in GOLD_KEYS})
+    if is_swebench:
+        reason = f"SWE-bench gold patches shipped with the data ({reason})"
+    gold_keys = sorted({k for r in dict_records for k in r if k in gold_keys_all})
     result.findings.append(Finding(
         "DATA-LEAK", "V2",
         f"{n} record(s) with gold answers ({reason})",

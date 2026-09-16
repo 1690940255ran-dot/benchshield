@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "benchshield"
-version = "0.1.0"
+version = "0.2.0"
 description = "Anti-cheating audit and isolated evaluation sandbox for AI agent benchmarks"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["ai-agents", "benchmark", "evaluation", "security", "reinforcement-learning"]
+keywords = ["ai-agents", "benchmark", "evaluation", "security", "reinforcement-learning",
+            "swe-bench", "terminal-bench", "llm-as-judge", "prompt-injection", "sandbox"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

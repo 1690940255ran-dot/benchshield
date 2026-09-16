@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#design-notes)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](tests/)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -29,13 +29,15 @@ harness can be cheated — it is **how easily**, and **how would you know**.
 
 ## What BenchShield does
 
-BenchShield turns that research into four composable tools:
+BenchShield turns that research into six composable tools:
 
 | Tool | What it does |
 |---|---|
 | `scan` | Static auditor that detects the **seven recurring vulnerability patterns** (V1–V7) in a benchmark project, with file/line evidence |
-| `runtime` | `SecureRunner` — a hardened evaluation runtime enforcing process isolation, per-task workspaces, and tamper logging |
+| `runtime` | `SecureRunner` — hardened evaluation runtime enforcing process isolation, per-task workspaces, and tamper logging; `DockerRunner` — same trust model with the evaluator sealed in a locked-down container |
+| `adapters` | SWE-bench / Terminal-Bench ingestion: real benchmark data becomes tasks, gold answers never enter the agent view |
 | `redteam` | Zero-capability attack agents (payload library) that **prove** a harness is exploitable — and that your defenses hold |
+| `judge` | LLM-as-judge semantic scoring with injection screening, sanitized prompts, and fail-closed verdicts |
 | `checklist` | The **Agent-Eval Checklist (C1–C10)** with an A–F grade, drop-in for CI |
 
 Zero third-party dependencies. Python 3.10+. MIT licensed.
@@ -142,9 +144,12 @@ benchshield/
 │   ├── scanner.py       # static analysis for the 7 vulnerability patterns
 │   ├── checklist.py     # Agent-Eval Checklist (C1-C10) scoring
 │   ├── sandbox.py       # VulnerableRunner / SecureRunner
+│   ├── dockersandbox.py # strongest tier: locked-down container per task (optional Docker)
 │   ├── redteam.py       # zero-capability attack payloads + honest baseline agent
 │   ├── netguard.py      # C2 defense: runtime-enforced network block (socket/DNS patch)
 │   ├── judgeguard.py    # V4 defense: judge-prompt sanitizer + injection detector
+│   ├── llmjudge.py      # LLM-as-judge: injection screen + fail-closed PASS/FAIL verdicts
+│   ├── adapters.py      # SWE-bench / Terminal-Bench ingestion (gold kept from agents)
 │   ├── yamlmini.py      # zero-dependency YAML subset parser (configs / compose files)
 │   ├── benchdata.py     # deterministic 5-category mini benchmark
 │   ├── example_bench.py # self-contained vulnerable-bench generator (demo target)
@@ -152,13 +157,13 @@ benchshield/
 │   ├── report.py        # markdown report rendering
 │   └── __main__.py      # CLI: scan / demo / export-bench
 ├── examples/vulnerable_bench/   # demo benchmark containing all 7 patterns
-├── tests/                       # 85 unit tests, stdlib unittest
+├── tests/                       # 108 unit tests, stdlib unittest
 └── pyproject.toml
 ```
 
 ## Defenses, not just detection
 
-Three of the checklist items ship with working defenses, not only detection:
+The checklist items ship with working defenses, not only detection:
 
 **`netguard` — runtime network isolation (C2).** While the agent acts, every
 Python-level network API (`socket`, DNS resolution, `urllib`) raises
@@ -170,6 +175,22 @@ from benchshield.netguard import network_blocked, NetworkBlockedError
 
 with network_blocked():
     ...  # agent code runs here; any socket call raises
+```
+
+**`dockersandbox` — kernel-level task isolation (C2/C9, strongest tier).** Each
+task's evaluator executes in a fresh, disposable container: `--network none`
+(no network namespace at all), `--read-only` root filesystem, `--tmpfs
+/workspace` scratch that vanishes on exit, `--cap-drop ALL`, no `--privileged`.
+Code and payload travel over **stdin** — nothing is mounted from the host, so
+the V1 shared-volume anti-pattern is structurally impossible. Docker is
+optional: when the daemon is unreachable the runner degrades loudly (results
+are explicitly marked process-isolated-only) and the test suite auto-skips.
+
+```python
+from benchshield.dockersandbox import DockerRunner
+
+with DockerRunner(tasks, workspace_root="run1") as runner:
+    report = runner.run(my_agent)  # evaluator runs inside the sandbox
 ```
 
 **`judgeguard` — judge-prompt hardening (V4).** `sanitize()` strips control
@@ -185,6 +206,36 @@ from benchshield.judgeguard import build_judge_prompt
 prompt, report = build_judge_prompt(agent_response, gold)
 if report.suspicious:
     ...  # log the injection attempt
+```
+
+**`llmjudge` — semantic scoring, safely (V4 defense in use).** `SemanticJudge`
+wraps any `complete(prompt) -> str` callable (bundled: `OllamaJudge`, any
+OpenAI-compatible chat endpoint, local Ollama included, zero dependencies).
+The raw response is screened **before** the model is called — a flagged
+injection attempt fails the task outright and never reaches the judge.
+Verdicts must be strictly `PASS`/`FAIL`; anything else (including an
+unreachable model) is a judge error and the task is **not** marked solved.
+Fail-closed, never fail-open.
+
+```python
+from benchshield.llmjudge import SemanticJudge, OllamaJudge
+
+judge = SemanticJudge(OllamaJudge(model="qwen3.5:9b"))
+verdict = judge.judge(task_id, agent_response, gold)
+```
+
+**`adapters` — real benchmark data in, same guarantees out.** SWE-bench JSONL
+files and Terminal-Bench task directories load into the internal task model
+with `patch` / `test_patch` / `solution.sh` recognized as gold answers (V2):
+the public view handed to agents never contains them. The scanner recognizes
+the SWE-bench field signature too, so an `instances.jsonl` dropped into the
+agent workspace gets flagged just like any other gold-answer leak.
+
+```python
+from benchshield.adapters import load_swebench, load_terminalbench
+
+tasks = load_swebench("instances.jsonl")          # patch -> gold
+tasks = load_terminalbench("path/to/tasks")       # solution.sh -> gold
 ```
 
 **`yamlmini` — YAML subset parser.** Benchmark configs and docker-compose
@@ -210,21 +261,26 @@ and agent/evaluator services sharing a volume are both flagged.
 ## Limitations
 
 - The `netguard` network block operates at the Python API level; a native
-  extension calling OS sockets directly would bypass it. For high-stakes
-  runs, layer container/namespace isolation on top (Linux `unshare -n`).
-- LLM-judge sanitization (`judgeguard`) reduces and detects injection, but
-  no text-level defense can be *proven* safe against every prompt attack.
-- The mini benchmark is fully verifiable (exact match); semantic-judge
-  integration is on the roadmap.
+  extension calling OS sockets directly would bypass it. For kernel-level
+  isolation use the bundled `DockerRunner` (`--network none`), or layer
+  namespace isolation on top (Linux `unshare -n`).
+- The Docker tier needs a Docker daemon (Linux containers); without one,
+  `DockerRunner` falls back to process isolation and marks every result as
+  such — it never silently claims container isolation it did not provide.
+- LLM-judge sanitization (`judgeguard`, `llmjudge`) reduces and detects
+  injection, but no text-level defense can be *proven* safe against every
+  prompt attack, and a semantic judge can err on borderline answers —
+  verdicts therefore record errors and injection flags for audit rather than
+  defaulting to pass.
 
 ## Roadmap
 
 - [x] YAML / docker-compose config scanning (`yamlmini` + compose rules)
 - [x] Runtime-enforced network isolation (`netguard`, C2)
 - [x] Judge-prompt sanitizer library (`judgeguard`, V4)
-- [ ] Docker-based task sandboxes (fresh container snapshot per task)
-- [ ] SWE-bench / Terminal-Bench task-format adapters
-- [ ] Semantic (LLM) judge integration using `judgeguard`
+- [x] Docker-based task sandboxes (`dockersandbox`, fresh container per task)
+- [x] SWE-bench / Terminal-Bench task-format adapters (`adapters`)
+- [x] Semantic (LLM) judge integration using `judgeguard` (`llmjudge`)
 
 ## Contributing
 
