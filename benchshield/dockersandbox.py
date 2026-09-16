@@ -22,7 +22,9 @@ the *evaluator* — the component that holds gold answers — executes in the
 sandbox. For fully agent-side sandboxing, point your agent's tool calls at
 ``DockerSandbox.run`` as well.
 
-Docker is OPTIONAL: when the daemon is unreachable every API raises
+Docker is OPTIONAL: the daemon must be able to run **Linux** containers
+(``python:3.12-slim`` is a Linux image, so a Windows-container daemon does
+not qualify). When no such daemon is reachable every API raises
 ``DockerUnavailableError`` and the test suite auto-skips, so zero-Docker
 users lose nothing.
 """
@@ -76,17 +78,32 @@ class DockerSandbox:
         self._docker_path = shutil.which("docker")
 
     def available(self) -> bool:
-        """True when the docker CLI exists and the daemon answers."""
+        """True when a daemon that can run **Linux** containers is reachable.
+
+        All three conditions matter, and the third is the one that bites:
+
+        1. the docker CLI exists;
+        2. the daemon answers;
+        3. the daemon runs LINUX containers.
+
+        A Windows-container daemon (the default on Windows CI runners)
+        answers every version probe happily, then fails on every image this
+        module needs — ``python:3.12-slim`` is a Linux image. Without the
+        OS-type probe, "is Docker available?" degenerates into "is the CLI
+        installed?", and the caller finds out the hard way, mid-`docker run`,
+        with a hard failure instead of a clean skip. Probing the OS type
+        keeps this an availability check rather than a deferred crash.
+        """
         if not self._docker_path:
             return False
         try:
             proc = subprocess.run(
-                ["docker", "version", "--format", "{{.Server.Version}}"],
+                ["docker", "info", "--format", "{{.OSType}}"],
                 capture_output=True, text=True, timeout=15,
             )
-            return proc.returncode == 0 and bool(proc.stdout.strip())
         except (OSError, subprocess.TimeoutExpired):
             return False
+        return proc.returncode == 0 and proc.stdout.strip().lower() == "linux"
 
     def _require(self) -> None:
         if not self.available():

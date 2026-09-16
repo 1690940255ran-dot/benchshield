@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![零依赖](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#设计说明)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-115%20passing-brightgreen.svg)](tests/)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -149,7 +149,7 @@ benchshield/
 │   ├── report.py        # Markdown 报告渲染
 │   └── __main__.py      # CLI：scan / demo / export-bench
 ├── examples/vulnerable_bench/   # 包含全部七类漏洞的演示基准
-├── tests/                       # 108 项单元测试（标准库 unittest）
+├── tests/                       # 115 项单元测试（标准库 unittest）
 └── pyproject.toml
 ```
 
@@ -165,8 +165,10 @@ benchshield/
 全新的、用完即弃的容器里执行：`--network none`（完全没有网络命名空间）、`--read-only`
 根文件系统、`--tmpfs /workspace` 临时空间随容器一起消失、`--cap-drop ALL`、不使用
 `--privileged`。代码与载荷全部经 **stdin** 传入——宿主文件系统一个都不挂载，V1 的
-共享卷反模式在结构上就不可能发生。Docker 是可选的：守护进程不可用时运行器会**大声降级**
-（结果显式标注为「仅进程隔离」），测试套件自动跳过。
+共享卷反模式在结构上就不可能发生。Docker 是可选的，而且**哪一类** Docker 也有要求：
+守护进程必须能跑 Linux 容器（Windows 容器守护进程不合格，此时这一档会直接跳过，
+而不是跑到一半才失败）。没有这样的守护进程时，运行器会**大声降级**（结果显式标注为
+「仅进程隔离」），测试套件自动跳过。
 
 ```python
 from benchshield.dockersandbox import DockerRunner

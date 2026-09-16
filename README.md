@@ -8,7 +8,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#design-notes)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-108%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-115%20passing-brightgreen.svg)](tests/)
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
@@ -157,7 +157,7 @@ benchshield/
 │   ├── report.py        # markdown report rendering
 │   └── __main__.py      # CLI: scan / demo / export-bench
 ├── examples/vulnerable_bench/   # demo benchmark containing all 7 patterns
-├── tests/                       # 108 unit tests, stdlib unittest
+├── tests/                       # 115 unit tests, stdlib unittest
 └── pyproject.toml
 ```
 
@@ -183,8 +183,11 @@ task's evaluator executes in a fresh, disposable container: `--network none`
 /workspace` scratch that vanishes on exit, `--cap-drop ALL`, no `--privileged`.
 Code and payload travel over **stdin** — nothing is mounted from the host, so
 the V1 shared-volume anti-pattern is structurally impossible. Docker is
-optional: when the daemon is unreachable the runner degrades loudly (results
-are explicitly marked process-isolated-only) and the test suite auto-skips.
+optional, and so is the *kind* of Docker: the daemon must be able to run
+Linux containers (a Windows-container daemon does not qualify, so the tier
+skips instead of failing mid-run). When no such daemon is reachable the
+runner degrades loudly — results are explicitly marked process-isolated-only
+— and the test suite auto-skips.
 
 ```python
 from benchshield.dockersandbox import DockerRunner
